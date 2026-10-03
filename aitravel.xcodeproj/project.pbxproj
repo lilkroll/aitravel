@@ -12,6 +12,7 @@
 		A10000000000000000000003 /* FeedModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* FeedModels.swift */; };
 		A10000000000000000000004 /* FeedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* FeedViews.swift */; };
 		A10000000000000000000005 /* PhotoCredits.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* PhotoCredits.swift */; };
+		A10000000000000000000009 /* Planner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* Planner.swift */; };
 		A10000000000000000000006 /* TravelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* TravelModels.swift */; };
 		A10000000000000000000007 /* TravelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* TravelViews.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* Assets.xcassets */; };
@@ -24,6 +25,7 @@
 		A20000000000000000000003 /* FeedModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedModels.swift; sourceTree = "<group>"; };
 		A20000000000000000000004 /* FeedViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedViews.swift; sourceTree = "<group>"; };
 		A20000000000000000000005 /* PhotoCredits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoCredits.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* Planner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Planner.swift; sourceTree = "<group>"; };
 		A20000000000000000000006 /* TravelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelModels.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* TravelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelViews.swift; sourceTree = "<group>"; };
 		A20000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 				A20000000000000000000003 /* FeedModels.swift */,
 				A20000000000000000000004 /* FeedViews.swift */,
 				A20000000000000000000005 /* PhotoCredits.swift */,
+				A20000000000000000000009 /* Planner.swift */,
 				A20000000000000000000006 /* TravelModels.swift */,
 				A20000000000000000000007 /* TravelViews.swift */,
 				A20000000000000000000008 /* Assets.xcassets */,
@@ -139,6 +142,7 @@
 				A10000000000000000000003 /* FeedModels.swift in Sources */,
 				A10000000000000000000004 /* FeedViews.swift in Sources */,
 				A10000000000000000000005 /* PhotoCredits.swift in Sources */,
+				A10000000000000000000009 /* Planner.swift in Sources */,
 				A10000000000000000000006 /* TravelModels.swift in Sources */,
 				A10000000000000000000007 /* TravelViews.swift in Sources */,
 			);

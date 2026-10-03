@@ -34,9 +34,23 @@ struct CoastImage: View {
     let height: CGFloat
     var body: some View {
         GeometryReader { geometry in
-            Image(name)
-                .resizable()
-                .scaledToFill()
+            Group {
+                if UIImage(named: name) != nil {
+                    Image(name)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    // Generated places without a bundled photo get a calm sea-to-sky gradient.
+                    LinearGradient(colors: [Color(red: 0.55, green: 0.75, blue: 0.95), Palette.accent],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: "mappin.and.ellipse")
+                                .font(.system(size: 28))
+                                .foregroundStyle(.white.opacity(0.5))
+                                .padding(16)
+                        }
+                }
+            }
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .clipped()
                 .overlay {
@@ -253,5 +267,152 @@ struct SwapSheet: View {
     }
     private func signedPrice(_ value: Int) -> String {
         value == 0 ? "€0" : "\(value > 0 ? "+" : "−")\(euro(abs(value)))"
+    }
+}
+
+struct PlanningProgressCard: View {
+    let status: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ProgressView()
+                .tint(Palette.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Planning three ways to go")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Palette.text)
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.muted)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut, value: status)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct PlanErrorCard: View {
+    let message: String
+    let retry: (() -> Void)?
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.text)
+            HStack(spacing: 14) {
+                if let retry {
+                    Button("Try again", action: retry)
+                        .font(.system(size: 13, weight: .bold))
+                }
+                Button("Dismiss", action: dismiss)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+            }
+            .foregroundStyle(Palette.accent)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Palette.separator))
+    }
+}
+
+struct RefinePlanCard: View {
+    @Binding var text: String
+    let submit: (String) -> Void
+
+    private let suggestions = ["Make it cheaper", "More nature", "Less time on the road", "Slower pace", "Add one more day"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Make it better", systemImage: "sparkles")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Palette.text)
+            HStack(spacing: 8) {
+                TextField("Tell Claude what to change…", text: $text, axis: .vertical)
+                    .font(.system(size: 14))
+                    .lineLimit(1...3)
+                    .submitLabel(.send)
+                    .onSubmit { submit(text) }
+                Button { submit(text) } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Palette.accent, in: Circle())
+                }
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Update the plan")
+            }
+            .padding(.leading, 13).padding(.trailing, 6).padding(.vertical, 6)
+            .background(Palette.background, in: RoundedRectangle(cornerRadius: 16))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 7) {
+                    ForEach(suggestions, id: \.self) { suggestion in
+                        Button { submit(suggestion) } label: {
+                            Text(suggestion)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Palette.accent)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(Palette.accentSoft, in: Capsule())
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 20))
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Palette.separator))
+    }
+}
+
+struct ClaudeKeySheet: View {
+    let onSaved: () -> Void
+    @State private var key = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Kicker(text: "Connect Claude")
+            Text("Plan real trips.")
+                .font(.system(size: 32, weight: .bold))
+                .foregroundStyle(Palette.text)
+                .padding(.top, 7)
+            Text("Elsewhere uses Claude to turn your wish into routes and itineraries. Paste an Anthropic API key from platform.claude.com. It stays in this device’s Keychain.")
+                .font(.system(size: 14)).foregroundStyle(Palette.muted)
+                .padding(.top, 8)
+            SecureField("sk-ant-…", text: $key)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.system(size: 15, design: .monospaced))
+                .padding(14)
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.separator))
+                .padding(.top, 22)
+            Button {
+                KeyStore.save(key)
+                onSaved()
+            } label: {
+                Text("Save and continue")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 12))
+            }
+            .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
+            .padding(.top, 14)
+            Spacer()
+        }
+        .padding(.horizontal, 24).padding(.top, 34)
+        .presentationDragIndicator(.visible)
+        .presentationDetents([.medium])
+        .presentationBackground(Palette.background)
     }
 }
