@@ -1,52 +1,105 @@
 import SwiftUI
-import MapKit
 
-struct TravelWorldMap: View {
+/// A contribution-graph style world map: land is a grid of rounded squares,
+/// shaded by how much travel happened there.
+struct DotWorldMap: View {
+    let mode: MapActivityMode
+
+    private static let levels: [MapActivityMode: [[Int]]] = Dictionary(
+        uniqueKeysWithValues: MapActivityMode.allCases.map { ($0, MapActivityData.levels(for: $0)) }
+    )
+
     var body: some View {
-        Map(initialPosition: .camera(MapCamera(
-            centerCoordinate: CLLocationCoordinate2D(latitude: 30, longitude: 60),
-            distance: 45_000_000
-        )), bounds: MapCameraBounds(maximumDistance: 60_000_000), interactionModes: []) {
-            Annotation("Lisbon", coordinate: CLLocationCoordinate2D(latitude: 38.72, longitude: -9.14)) {
-                visitPin
-            }
-            Annotation("Rome", coordinate: CLLocationCoordinate2D(latitude: 41.90, longitude: 12.50)) {
-                visitPin
-            }
-            Annotation("Tokyo", coordinate: CLLocationCoordinate2D(latitude: 35.68, longitude: 139.69)) {
-                visitPin
+        let levels = Self.levels[mode] ?? []
+        Canvas { context, size in
+            let step = size.width / CGFloat(WorldGrid.columns)
+            let side = step * 0.78
+            for row in 0..<WorldGrid.rows {
+                for column in 0..<WorldGrid.columns {
+                    let level = levels[row][column]
+                    guard WorldGrid.land[row][column] || level > 0 else { continue }
+                    let rect = CGRect(x: CGFloat(column) * step + (step - side) / 2,
+                                      y: CGFloat(row) * step + (step - side) / 2,
+                                      width: side, height: side)
+                    context.fill(Path(roundedRect: rect, cornerRadius: side * 0.28),
+                                 with: .color(ActivityShade.color(level)))
+                }
             }
         }
-        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
-        .mapControlVisibility(.hidden)
-        .allowsHitTesting(false)
-        .accessibilityLabel("Sample visited places: Lisbon, Rome, and Tokyo")
+        .aspectRatio(CGFloat(WorldGrid.columns) / CGFloat(WorldGrid.rows), contentMode: .fit)
+        .animation(.easeInOut(duration: 0.25), value: mode)
+        .accessibilityElement()
+        .accessibilityLabel(mode == .mine
+            ? "Your sample visits: Lisbon, Rome, and Tokyo"
+            : "Sample activity from other travellers, busiest around Europe, Southeast Asia, and North America")
     }
+}
 
-    private var visitPin: some View {
-        Circle()
-            .fill(Palette.accent)
-            .frame(width: 10, height: 10)
-            .padding(4)
-            .background(.white, in: Circle())
-            .shadow(color: .black.opacity(0.15), radius: 3, y: 2)
+enum ActivityShade {
+    static func color(_ level: Int) -> Color {
+        switch level {
+        case 0: Color(uiColor: .systemGray5)
+        case 1: Palette.accent.opacity(0.28)
+        case 2: Palette.accent.opacity(0.5)
+        case 3: Palette.accent.opacity(0.75)
+        default: Palette.accent
+        }
+    }
+}
+
+struct ActivityLegend: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("Less").padding(.trailing, 2)
+            ForEach(0..<5) { level in
+                RoundedRectangle(cornerRadius: 2.5)
+                    .fill(ActivityShade.color(level))
+                    .frame(width: 10, height: 10)
+            }
+            Text("More").padding(.leading, 2)
+        }
+        .font(.caption2)
+        .foregroundStyle(Palette.muted)
+        .accessibilityHidden(true)
+    }
+}
+
+struct ActivityModePicker: View {
+    @Binding var mode: MapActivityMode
+
+    var body: some View {
+        Picker("Show", selection: $mode.animation(.easeInOut(duration: 0.25))) {
+            ForEach(MapActivityMode.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+    }
+}
+
+extension MapActivityMode {
+    var summary: String {
+        switch self {
+        case .mine: "3 countries · 6 visits"
+        case .everyone: "34 hotspots · 30 countries"
+        }
     }
 }
 
 struct WorldMapCard: View {
+    @Binding var mode: MapActivityMode
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: action) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Your world")
+                        Text(mode == .mine ? "Your world" : "Where people go")
                             .font(.title3.weight(.bold))
                             .foregroundStyle(Palette.text)
-                        Text("3 countries · 3 cities · 3 journeys")
+                        Text(mode.summary)
                             .font(.subheadline)
                             .foregroundStyle(Palette.muted)
+                            .contentTransition(.opacity)
                     }
                     Spacer()
                     Image(systemName: "arrow.up.right")
@@ -55,23 +108,29 @@ struct WorldMapCard: View {
                         .frame(width: 34, height: 34)
                         .background(Palette.background, in: Circle())
                 }
-                .padding(18)
-                TravelWorldMap()
-                    .frame(height: 150)
-                    .overlay(alignment: .topLeading) {
-                        Text("Sample visits")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(Palette.muted)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(.regularMaterial, in: Capsule())
-                            .padding(12)
-                    }
+                .contentShape(Rectangle())
             }
-            .background(Palette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open travel map")
+            ActivityModePicker(mode: $mode)
+                .padding(.top, 14)
+            Button(action: action) {
+                DotWorldMap(mode: mode)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 16)
+            HStack {
+                Text("Sample activity")
+                Spacer()
+                ActivityLegend()
+            }
+            .font(.caption2)
+            .foregroundStyle(Palette.muted)
+            .padding(.top, 12)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Preview your travel map with three sample visits")
+        .padding(18)
+        .background(Palette.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
     }
 }
 
@@ -246,46 +305,80 @@ struct FeedDestinationSheet: View {
 }
 
 struct TravelMapSheet: View {
+    @Binding var mode: MapActivityMode
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Kicker(text: "Travel journal")
-                Text("Your world, so far.")
+                Text(mode == .mine ? "Your world, so far." : "Where people go.")
                     .font(.system(size: 36, weight: .bold))
                     .foregroundStyle(Palette.text).padding(.top, 7)
-                Text("A preview of how visited places could live in Elsewhere.")
+                Text(mode == .mine
+                     ? "Every square you light up is a place you\u{2019}ve been."
+                     : "Brighter squares are where other travellers are heading.")
                     .font(.system(size: 14)).foregroundStyle(Palette.muted)
                     .padding(.top, 5)
-                TravelWorldMap()
-                    .frame(height: 260)
-                    .clipShape(RoundedRectangle(cornerRadius: 24))
-                    .padding(.top, 24)
-                Label("3 countries · 3 cities · 3 journeys", systemImage: "globe.europe.africa")
-                    .font(.subheadline.weight(.medium))
+                ActivityModePicker(mode: $mode)
+                    .padding(.top, 20)
+                VStack(alignment: .leading, spacing: 12) {
+                    DotWorldMap(mode: mode)
+                    HStack {
+                        Label(mode.summary, systemImage: "globe.europe.africa")
+                        Spacer()
+                        ActivityLegend()
+                    }
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(Palette.muted)
-                    .padding(.vertical, 19)
-                Kicker(text: "Sample places")
-                    .padding(.top, 11).padding(.bottom, 10)
-                ForEach(FeedData.previewVisits) { visit in
-                    HStack(spacing: 12) {
-                        Image(visit.artwork)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 52, height: 52)
-                            .clipShape(RoundedRectangle(cornerRadius: 11))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(visit.city).font(.system(size: 15, weight: .bold))
-                            Text("\(visit.country) · \(visit.note)")
+                }
+                .padding(16)
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 24))
+                .padding(.top, 16)
+                Kicker(text: mode == .mine ? "Sample places" : "Trending this month")
+                    .padding(.top, 26).padding(.bottom, 10)
+                if mode == .mine {
+                    ForEach(FeedData.previewVisits) { visit in
+                        HStack(spacing: 12) {
+                            Image(visit.artwork)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 52, height: 52)
+                                .clipShape(RoundedRectangle(cornerRadius: 11))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(visit.city).font(.system(size: 15, weight: .bold))
+                                Text("\(visit.country) · \(visit.note)")
+                                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                            }
+                            Spacer()
+                        }
+                        .padding(13)
+                        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 13))
+                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Palette.separator))
+                        .padding(.bottom, 8)
+                    }
+                } else {
+                    let trending = MapActivityData.everyone.sorted { $0.weight > $1.weight }.prefix(6)
+                    ForEach(Array(trending.enumerated()), id: \.element.id) { index, spot in
+                        HStack(spacing: 12) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Palette.accent)
+                                .frame(width: 36, height: 36)
+                                .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 9))
+                            Text(spot.name).font(.system(size: 15, weight: .bold))
+                            Spacer()
+                            Text("~\(spot.weight * 100) travellers")
                                 .font(.system(size: 12)).foregroundStyle(Palette.muted)
                         }
-                        Spacer()
+                        .padding(11)
+                        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 13))
+                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Palette.separator))
+                        .padding(.bottom, 8)
                     }
-                    .padding(13)
-                    .background(Palette.surface, in: RoundedRectangle(cornerRadius: 13))
-                    .overlay(RoundedRectangle(cornerRadius: 13).stroke(Palette.separator))
-                    .padding(.bottom, 8)
                 }
-                Text("This map uses example visits. It is not connected to your travel history yet.")
+                Text(mode == .mine
+                     ? "This map uses example visits. It is not connected to your travel history yet."
+                     : "Community activity is illustrative sample data, not real traveller counts.")
                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     .padding(.top, 7)
             }
@@ -300,6 +393,8 @@ struct TravelMapSheet: View {
 
 struct TravelProfileSheet: View {
     @State private var showPhotoCredits = false
+    @State private var showKeySheet = false
+    @State private var hasKey = ClaudeAPI.apiKey != nil
 
     var body: some View {
         ScrollView {
@@ -329,6 +424,10 @@ struct TravelProfileSheet: View {
                     .padding(.top, 26)
                 profileRow("Travel style", "Sea + nature", "sparkles")
                 profileRow("Usual escape", "3–4 days", "calendar")
+                Button { showKeySheet = true } label: {
+                    profileRow("Claude", hasKey ? "Connected" : "Add API key", "sparkles")
+                }
+                .buttonStyle(.plain)
                 Text("Example profile settings for this visual mock.")
                     .font(.system(size: 12)).foregroundStyle(Palette.muted)
                     .padding(.top, 15)
@@ -339,6 +438,12 @@ struct TravelProfileSheet: View {
         .presentationDetents([.medium, .large])
         .presentationBackground(Palette.background)
         .sheet(isPresented: $showPhotoCredits) { PhotoCreditsSheet() }
+        .sheet(isPresented: $showKeySheet) {
+            ClaudeKeySheet {
+                showKeySheet = false
+                hasKey = ClaudeAPI.apiKey != nil
+            }
+        }
     }
 
     private func profileRow(_ title: String, _ value: String, _ symbol: String) -> some View {

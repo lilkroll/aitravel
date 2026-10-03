@@ -13,13 +13,22 @@ struct ContentView: View {
     @State private var screen: Screen = .feed
     @State private var wish = TravelData.sampleWish
     @State private var routeID = 0
-    @State private var selectedDay = 2
+    @State private var selectedDay = 1
     @State private var swaps: [String: Int] = [:]
-    @State private var savedRouteID: Int?
+    @State private var savedRoute: TravelRoute?
+    @State private var routes = TravelData.routes
+    @State private var planContext = PlanContext.sample
+    @State private var planner = TripPlanner()
+    @State private var planError: String?
+    @State private var refineText = ""
+    @State private var wishBeforeImprove: String?
+    @State private var showKeySheet = false
+    @State private var afterKeySaved: (() -> Void)?
     @State private var swapTarget: SwapTarget?
     @State private var voiceIdeas = false
     @State private var showProfile = false
     @State private var showMap = false
+    @State private var mapMode: MapActivityMode = .mine
     @State private var selectedDestination: FeedDestination?
     @State private var feedCategory: FeedCategory = .all
     @State private var savedIdeaIDs: Set<Int> = []
@@ -34,14 +43,24 @@ struct ContentView: View {
         if arguments.contains("--preview-swap") {
             _screen = State(initialValue: .itinerary)
             _swapTarget = State(initialValue: SwapTarget(routeID: 0, day: 2, stopID: 1))
+            _selectedDay = State(initialValue: 2)
         }
         if arguments.contains("--preview-map") { _showMap = State(initialValue: true) }
+        if arguments.contains("--preview-map-everyone") {
+            _showMap = State(initialValue: true)
+            _mapMode = State(initialValue: .everyone)
+        }
         if arguments.contains("--preview-profile") { _showProfile = State(initialValue: true) }
         if arguments.contains("--preview-destination") { _selectedDestination = State(initialValue: FeedData.destinations[0]) }
         #endif
     }
 
-    private var route: TravelRoute { TravelData.routes[routeID] }
+    private var route: TravelRoute { routeWith(id: routeID) ?? routes[0] }
+    private var isGeneratedPlan: Bool { routes.first?.days != nil }
+
+    private func routeWith(id: Int) -> TravelRoute? {
+        routes.first { $0.id == id } ?? (savedRoute?.id == id ? savedRoute : nil)
+    }
     private var day: DayPlan { TravelData.day(selectedDay, for: route) }
 
     var body: some View {
@@ -70,7 +89,7 @@ struct ContentView: View {
         }
         .tint(Palette.accent)
         .sheet(item: $swapTarget) { target in
-            let stop = TravelData.day(target.day, for: TravelData.routes[target.routeID]).stops[target.stopID]
+            let stop = TravelData.day(target.day, for: routeWith(id: target.routeID) ?? route).stops[target.stopID]
             SwapSheet(stop: stop, initialSelection: swaps[target.id] ?? 0) { choice in
                 swaps[target.id] = choice
                 swapTarget = nil
@@ -80,7 +99,14 @@ struct ContentView: View {
             .presentationBackground(Palette.background)
         }
         .sheet(isPresented: $showProfile) { TravelProfileSheet() }
-        .sheet(isPresented: $showMap) { TravelMapSheet() }
+        .sheet(isPresented: $showKeySheet) {
+            ClaudeKeySheet {
+                showKeySheet = false
+                afterKeySaved?()
+                afterKeySaved = nil
+            }
+        }
+        .sheet(isPresented: $showMap) { TravelMapSheet(mode: $mapMode) }
         .sheet(item: $selectedDestination) { destination in
             FeedDestinationSheet(destination: destination, isSaved: savedIdeaIDs.contains(destination.id)) {
                 if savedIdeaIDs.contains(destination.id) {
@@ -90,6 +116,11 @@ struct ContentView: View {
                 }
             }
         }
+        #if DEBUG
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("--preview-plan-run") { startPlanning() }
+        }
+        #endif
         .confirmationDialog("Try a spoken idea", isPresented: $voiceIdeas) {
             Button("A quiet beach and nature") { wish = "Four days somewhere warm with a quiet beach and beautiful nature. Start from Warsaw." }
             Button("Wild coast and hiking") { wish = "Four days of dramatic coastline and easy hikes, starting from Warsaw." }
@@ -122,7 +153,7 @@ struct ContentView: View {
                 }
                 .padding(.bottom, 15)
 
-                WorldMapCard { showMap = true }
+                WorldMapCard(mode: $mapMode) { showMap = true }
 
                 Text("Good places to go")
                     .font(.system(size: 33, weight: .bold))
@@ -264,9 +295,34 @@ struct ContentView: View {
                         .accessibilityLabel("Describe your next escape")
                     Palette.separator.frame(height: 1)
                     HStack {
-                        Text("Start with a feeling")
-                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        if let wishBeforeImprove {
+                            Button {
+                                wish = wishBeforeImprove
+                                self.wishBeforeImprove = nil
+                            } label: {
+                                Label("Undo", systemImage: "arrow.uturn.backward")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Palette.accent)
+                            }
+                        } else {
+                            Text("Start with a feeling")
+                                .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        }
                         Spacer()
+                        Button(action: improveWish) {
+                            Group {
+                                if planner.isImprovingWish {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles").font(.system(size: 16))
+                                }
+                            }
+                            .foregroundStyle(Palette.accent)
+                            .frame(width: 38, height: 38)
+                            .background(Palette.accentSoft, in: Circle())
+                        }
+                        .disabled(planner.isImprovingWish || wish.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Make my wish clearer")
                         Button { voiceIdeas = true } label: {
                             Image(systemName: "mic").font(.system(size: 16))
                                 .foregroundStyle(Palette.accent)
@@ -274,14 +330,15 @@ struct ContentView: View {
                                 .background(Palette.accentSoft, in: Circle())
                         }
                         .accessibilityLabel("Try a spoken idea")
-                        Button { screen = .routes } label: {
+                        Button(action: startPlanning) {
                             Image(systemName: "arrow.right")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(.white)
                                 .frame(width: 38, height: 38)
                                 .background(Palette.accent, in: Circle())
                         }
-                        .accessibilityLabel("See sample routes")
+                        .disabled(planner.isWorking || wish.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Plan this trip")
                     }
                 }
                 .padding(17)
@@ -350,28 +407,106 @@ struct ContentView: View {
                     .font(.system(size: 15)).foregroundStyle(Palette.muted)
                     .padding(.top, 8)
                 HStack(spacing: 7) {
-                    contextChip("↗ From Warsaw")
-                    contextChip("◷ 4 days")
-                    contextChip("€ Around 800")
+                    contextChip("↗ From \(planContext.origin)")
+                    contextChip("◷ \(planContext.days) days")
+                    contextChip("€ \(planContext.budget.replacingOccurrences(of: "€", with: ""))")
                 }
                 .padding(.top, 18).padding(.bottom, 20)
-                ForEach(TravelData.routes) { candidate in
+                if planner.isWorking {
+                    PlanningProgressCard(status: planner.progress)
+                        .padding(.bottom, 12)
+                } else if let planError {
+                    PlanErrorCard(message: planError, retry: isGeneratedPlan ? nil : { startPlanning() }) {
+                        self.planError = nil
+                    }
+                    .padding(.bottom, 12)
+                }
+                if !planner.isWorking {
+                    routeCards
+                    if isGeneratedPlan {
+                        RefinePlanCard(text: $refineText, submit: refinePlan)
+                            .padding(.top, 8)
+                    }
+                }
+                Text(isGeneratedPlan
+                     ? "Planned with Claude. Prices and times are estimates per person in EUR, not live fares or bookable options. Check details before you book."
+                     : "Illustrative route concepts and per-person EUR estimates. These are not live prices or bookable options.")
+                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    .padding(.top, 5)
+            }
+            .padding(.horizontal, 20).padding(.top, 15).padding(.bottom, 30)
+        }
+    }
+
+    private var routeCards: some View {
+        ForEach(routes) { candidate in
                     let change = changes(for: candidate)
                     RouteCard(route: candidate,
                               total: candidate.estimatedTotal + change.price,
                               travel: candidate.travelMinutes + change.roadMinutes,
                               visits: candidate.visitMinutes + change.visitMinutes) {
                         routeID = candidate.id
-                        selectedDay = 2
+                        selectedDay = 1
                         screen = .itinerary
                     }
                     .padding(.bottom, 12)
-                }
-                Text("Illustrative route concepts and per-person EUR estimates. These are not live prices or bookable options.")
-                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                    .padding(.top, 5)
+        }
+    }
+
+    private func startPlanning() {
+        guard ClaudeAPI.apiKey != nil else {
+            afterKeySaved = startPlanning
+            showKeySheet = true
+            return
+        }
+        planError = nil
+        screen = .routes
+        Task {
+            do {
+                apply(try await planner.plan(wish: wish, origin: "Warsaw"))
+            } catch {
+                planError = error.localizedDescription
             }
-            .padding(.horizontal, 20).padding(.top, 15).padding(.bottom, 30)
+        }
+    }
+
+    private func refinePlan(_ feedback: String) {
+        let feedback = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !feedback.isEmpty else { return }
+        planError = nil
+        Task {
+            do {
+                apply(try await planner.refine(feedback))
+                refineText = ""
+            } catch {
+                planError = error.localizedDescription
+            }
+        }
+    }
+
+    private func apply(_ plan: GeneratedPlan) {
+        guard let first = plan.routes.first else { return }
+        routes = plan.routes
+        planContext = plan.context
+        routeID = first.id
+        selectedDay = 1
+    }
+
+    private func improveWish() {
+        guard ClaudeAPI.apiKey != nil else {
+            afterKeySaved = improveWish
+            showKeySheet = true
+            return
+        }
+        let original = wish
+        Task {
+            do {
+                wish = try await planner.improve(wish: original, origin: "Warsaw")
+                wishBeforeImprove = original
+            } catch {
+                planError = error.localizedDescription
+                screen = .routes
+            }
         }
     }
 
@@ -388,7 +523,7 @@ struct ContentView: View {
                 HStack {
                     back("All routes") { screen = .routes }
                     Spacer()
-                    ShareLink(item: "Elsewhere · \(route.name) in \(route.place) · 4 days from Warsaw · estimated \(euro(route.estimatedTotal + changes(for: route).price)) per person") {
+                    ShareLink(item: "Elsewhere · \(route.name) in \(route.place) · \(route.dayCount) days from \(planContext.origin) · estimated \(euro(route.estimatedTotal + changes(for: route).price)) per person") {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 16))
                             .foregroundStyle(Palette.text)
@@ -403,11 +538,11 @@ struct ContentView: View {
                 Text(route.headline).font(.system(size: 38, weight: .bold))
                     .tracking(-0.8).foregroundStyle(Palette.text)
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 7)
-                Text("4 days · from Warsaw · illustrative plan")
+                Text("\(route.dayCount) days · from \(planContext.origin) · \(isGeneratedPlan ? "planned with Claude" : "illustrative plan")")
                     .font(.system(size: 13)).foregroundStyle(Palette.muted).padding(.top, 6)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
-                        ForEach(1...4, id: \.self) { number in
+                        ForEach(1...route.dayCount, id: \.self) { number in
                             Button { selectedDay = number } label: {
                                 Text("Day \(number)")
                                     .font(.system(size: 13, weight: .semibold))
@@ -420,7 +555,7 @@ struct ContentView: View {
                     }
                 }
                 .padding(.top, 22)
-                Kicker(text: "Day \(selectedDay) / 4").padding(.top, 27)
+                Kicker(text: "Day \(selectedDay) / \(route.dayCount)").padding(.top, 27)
                 Text(day.title).font(.system(size: 26, weight: .bold))
                     .tracking(-0.8).foregroundStyle(Palette.text).padding(.top, 5)
                 Text(day.note).font(.system(size: 13)).foregroundStyle(Palette.muted).padding(.top, 4)
@@ -438,8 +573,8 @@ struct ContentView: View {
                 }
                 timeline.padding(.top, 23)
                 budgetCard.padding(.top, 20)
-                Button { savedRouteID = savedRouteID == route.id ? nil : route.id } label: {
-                    Text(savedRouteID == route.id ? "♥ Saved to your journeys" : "♡ Save this journey")
+                Button { savedRoute = savedRoute?.id == route.id ? nil : route } label: {
+                    Text(savedRoute?.id == route.id ? "♥ Saved to your journeys" : "♡ Save this journey")
                         .font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.accent)
                         .frame(maxWidth: .infinity).padding(.vertical, 13)
                         .background(Palette.accentSoft, in: RoundedRectangle(cornerRadius: 13))
@@ -499,7 +634,7 @@ struct ContentView: View {
             Text("~\(euro(route.estimatedTotal + change.price))")
                 .font(.system(size: 35, weight: .bold))
                 .foregroundStyle(.white).padding(.top, 8)
-            Text("Per person · 4 days · EUR · illustrative")
+            Text("Per person · \(route.dayCount) days · EUR · \(isGeneratedPlan ? "estimate" : "illustrative")")
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
                 .padding(.top, 3).padding(.bottom, 13)
             budgetRow("Travel to destination", route.costs.destinationTravel)
@@ -537,7 +672,7 @@ struct ContentView: View {
                 Text("Saved places")
                     .font(.system(size: 34, weight: .bold)).tracking(-0.8)
                     .foregroundStyle(Palette.text).padding(.top, 10)
-                if savedRouteID == nil && savedIdeaIDs.isEmpty {
+                if savedRoute == nil && savedIdeaIDs.isEmpty {
                     CoastImage(name: "Tavira", height: 190)
                         .clipShape(RoundedRectangle(cornerRadius: 24))
                         .padding(.top, 35)
@@ -555,15 +690,14 @@ struct ContentView: View {
                 } else {
                     Text("A place to return to your ideas and plans.")
                         .font(.system(size: 15)).foregroundStyle(Palette.muted).padding(.top, 9)
-                    if let savedRouteID {
-                        let saved = TravelData.routes[savedRouteID]
+                    if let saved = savedRoute {
                         let change = changes(for: saved)
                         Kicker(text: "Your route").padding(.top, 27).padding(.bottom, 12)
                         RouteCard(route: saved, total: saved.estimatedTotal + change.price,
                                   travel: saved.travelMinutes + change.roadMinutes,
                                   visits: saved.visitMinutes + change.visitMinutes) {
-                            routeID = savedRouteID
-                            selectedDay = 2
+                            routeID = saved.id
+                            selectedDay = 1
                             screen = .itinerary
                         }
                     }

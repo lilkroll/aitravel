@@ -57,6 +57,10 @@ struct TravelRoute: Identifiable {
     let dayTitle: String
     let dayNote: String
     let stops: [TravelStop]
+    /// Every day of a generated plan. Sample routes leave this empty and share days 1, 3, and 4.
+    var days: [DayPlan]? = nil
+
+    var dayCount: Int { days?.count ?? 4 }
 }
 
 struct DayPlan {
@@ -165,6 +169,9 @@ enum TravelData {
     ]
 
     static func day(_ number: Int, for route: TravelRoute) -> DayPlan {
+        if let days = route.days, !days.isEmpty {
+            return days[min(max(number, 1), days.count) - 1]
+        }
         if number == 2 {
             return DayPlan(title: route.dayTitle, note: route.dayNote, startMinute: 540, stops: route.stops)
         }
