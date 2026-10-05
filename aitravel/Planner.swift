@@ -1,13 +1,22 @@
 import Foundation
-import Security
 
 /// What the routes page shows above the cards: where from, how long, roughly how much.
 struct PlanContext: Equatable {
-    var origin: String
-    var days: Int
-    var budget: String
+    enum Source { case sample, place, generated }
 
-    static let sample = PlanContext(origin: "Warsaw", days: 4, budget: "Around €800")
+    var origin: String
+    var duration: String
+    var budget: String
+    /// Shown as "<title>, three ways." on the routes page.
+    var title = "Your escape"
+    var source = Source.sample
+
+    static let sample = PlanContext(origin: "Warsaw", duration: "4 days", budget: "Around €800")
+
+    static func place(_ place: Place, origin: String) -> PlanContext {
+        PlanContext(origin: origin, duration: place.dayRange, budget: "from \(euro(place.cheapestTotal))",
+                    title: place.name, source: .place)
+    }
 }
 
 struct GeneratedPlan {
@@ -24,18 +33,18 @@ enum PlannerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingKey: "Add a Claude API key to plan real trips."
-        case .http(401, _): "Claude didn’t accept the API key. Check it in your profile."
-        case .http(429, _): "Claude is busy right now. Try again in a moment."
-        case .http(let code, let message): "Claude returned an error (\(code)). \(message)"
-        case .refused: "Claude couldn’t plan this one. Try describing the trip differently."
+        case .missingKey: "Add MINIMAX_API_KEY to the .env file to plan custom trips."
+        case .http(401, _), .http(403, _): "MiniMax didn’t accept the API key. Check MINIMAX_API_KEY in .env."
+        case .http(429, _): "MiniMax is busy right now. Try again in a moment."
+        case .http(let code, let message): "MiniMax returned an error (\(code)). \(message)"
+        case .refused: "MiniMax couldn’t plan this one. Try describing the trip differently."
         case .truncated: "The plan came back incomplete. Try a shorter trip or fewer details."
         case .unreadable: "The plan came back in an unexpected shape. Try again."
         }
     }
 }
 
-/// Plans trips with Claude. Keeps the conversation so "make it better" requests
+/// Plans custom trips with MiniMax M3.1. Keeps the conversation so "make it better" requests
 /// build on the routes already shown.
 @MainActor
 @Observable
@@ -66,7 +75,7 @@ final class TripPlanner {
         isImprovingWish = true
         defer { isImprovingWish = false }
         let body: [String: Any] = [
-            "model": ClaudeAPI.model,
+            "model": AppConfig.miniMaxModel,
             "max_tokens": 2000,
             "output_config": ["effort": "low"],
             "system": """
@@ -78,7 +87,7 @@ final class TripPlanner {
             """,
             "messages": [["role": "user", "content": wish]]
         ]
-        let message = try await ClaudeAPI.send(body) { _ in }
+        let message = try await LLMAPI.send(body) { _ in }
         let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw PlannerError.unreadable }
         return text
@@ -89,16 +98,16 @@ final class TripPlanner {
         progress = "Reading your wish"
         defer { isWorking = false }
         let body: [String: Any] = [
-            "model": ClaudeAPI.model,
+            "model": AppConfig.miniMaxModel,
             "max_tokens": 32000,
-            "output_config": ["effort": "medium", "format": ["type": "json_schema", "schema": PlanSchema.schema]],
+            "output_config": ["effort": "medium"],
             "system": PlanSchema.systemPrompt,
             "messages": history
         ]
-        let message = try await ClaudeAPI.send(body) { [weak self] text in
+        let message = try await LLMAPI.send(body) { [weak self] text in
             self?.progress = PlanSchema.progress(for: text)
         }
-        guard let data = message.text.data(using: .utf8),
+        guard let data = PlanSchema.jsonObjectText(in: message.text).data(using: .utf8),
               let dto = try? JSONDecoder().decode(PlanDTO.self, from: data),
               dto.routes.count > 0 else { throw PlannerError.unreadable }
         history.append(["role": "assistant", "content": message.content])
@@ -108,9 +117,8 @@ final class TripPlanner {
 
 // MARK: - API
 
-enum ClaudeAPI {
-    static let model = "claude-opus-5-5"
-
+/// MiniMax's Anthropic-compatible Messages API.
+enum LLMAPI {
     struct Message {
         /// Content blocks exactly as returned, so they can be sent back unchanged.
         let content: [[String: Any]]
@@ -119,25 +127,21 @@ enum ClaudeAPI {
         }
     }
 
-    static var apiKey: String? {
-        if let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !key.isEmpty { return key }
-        return KeyStore.load()
-    }
+    static var apiKey: String? { AppConfig.miniMaxAPIKey }
 
     /// Streams a Messages API request and rebuilds the final content blocks from the events.
     static func send(_ body: [String: Any], onText: @escaping (String) -> Void) async throws -> Message {
         guard let apiKey else { throw PlannerError.missingKey }
         var body = body
         body["stream"] = true
-        body["fallbacks"] = "default"
 
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        guard let url = URL(string: AppConfig.miniMaxBaseURL + "/v1/messages") else { throw PlannerError.missingKey }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "authorization")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -211,39 +215,12 @@ enum ClaudeAPI {
     }
 }
 
-/// Stores the API key in the Keychain so it never lands in the project or UserDefaults.
-enum KeyStore {
-    private static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "elsewhere.anthropic",
-        kSecAttrAccount as String: "api-key"
-    ]
-
-    static func load() -> String? {
-        var request = query
-        request[kSecReturnData as String] = true
-        var result: AnyObject?
-        guard SecItemCopyMatching(request as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func save(_ key: String) {
-        SecItemDelete(query as CFDictionary)
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        var item = query
-        item[kSecValueData as String] = Data(trimmed.utf8)
-        SecItemAdd(item as CFDictionary, nil)
-    }
-}
-
 // MARK: - Plan schema
 
 private enum PlanSchema {
     static let artwork = ["Algarve", "Costa", "Tavira", "Lisbon", "Madeira", "Rome", "Copenhagen", "Tokyo", "none"]
 
-    static let systemPrompt = """
+    static var systemPrompt: String { """
     You are the trip planner inside Elsewhere, a travel app. Turn the traveller's wish into three genuinely \
     different ways to take the trip, each with a complete day-by-day itinerary they could follow.
 
@@ -251,7 +228,7 @@ private enum PlanSchema {
     - Start from the traveller's home city unless the wish names another origin. Use the trip length and budget \
     they give; if they don't give them, choose sensible ones and reflect them in the plan's context fields.
     - The three routes should differ in a meaningful trade-off (for example easiest journey, most nature, best \
-    value, most culture) and say so in a short badge. They may share a destination region or go to different ones.
+    value, most culture) and say so in a badge of 2–3 words, such as "Easiest journey" or "Best value". They may share a destination region or go to different ones.
     - Use real places that exist. Keep travel times and prices realistic for the season; all money is an \
     estimated per-person amount in whole euros, and all durations are whole minutes.
     - Every day has 2–4 stops in visiting order. transferMinutes/transferTitle/transferCost describe getting from \
@@ -267,7 +244,21 @@ private enum PlanSchema {
 
     When the traveller asks to make the plan better, return a complete updated plan that applies their request \
     while keeping what they didn't ask to change.
-    """
+
+    Reply with only one JSON object that matches this JSON Schema — no markdown, no commentary:
+    \(schemaText)
+    """ }
+
+    private static var schemaText: String {
+        guard let data = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The JSON object inside a reply, tolerating stray prose or code fences around it.
+    static func jsonObjectText(in text: String) -> String {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return text }
+        return String(text[start...end])
+    }
 
     private static func object(_ properties: [String: Any]) -> [String: Any] {
         ["type": "object", "properties": properties, "required": Array(properties.keys), "additionalProperties": false]
@@ -362,6 +353,6 @@ private struct PlanDTO: Decodable {
                 stops: anchor?.stops ?? [], days: days
             )
         }
-        return GeneratedPlan(context: PlanContext(origin: origin, days: max(days, 1), budget: budget), routes: routes)
+        return GeneratedPlan(context: PlanContext(origin: origin, duration: "\(max(days, 1)) days", budget: budget, source: .generated), routes: routes)
     }
 }

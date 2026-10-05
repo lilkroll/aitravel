@@ -32,6 +32,8 @@ struct Brand: View {
 struct CoastImage: View {
     let name: String
     let height: CGFloat
+    var placeholder: LinearGradient? = nil
+    var symbol: String? = nil
     var body: some View {
         GeometryReader { geometry in
             Group {
@@ -40,11 +42,11 @@ struct CoastImage: View {
                         .resizable()
                         .scaledToFill()
                 } else {
-                    // Generated places without a bundled photo get a calm sea-to-sky gradient.
-                    LinearGradient(colors: [Color(red: 0.55, green: 0.75, blue: 0.95), Palette.accent],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                    // Places without a bundled photo get their own gradient, or a calm sea-to-sky default.
+                    (placeholder ?? LinearGradient(colors: [Color(red: 0.55, green: 0.75, blue: 0.95), Palette.accent],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing))
                         .overlay(alignment: .topTrailing) {
-                            Image(systemName: "mappin.and.ellipse")
+                            Image(systemName: symbol ?? "mappin.and.ellipse")
                                 .font(.system(size: 28))
                                 .foregroundStyle(.white.opacity(0.5))
                                 .padding(16)
@@ -68,10 +70,13 @@ struct RouteCard: View {
     let visits: Int
     let action: () -> Void
 
+    private var place: Place? { PlaceLibrary.place(containing: route.id) }
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 0) {
-                CoastImage(name: route.artwork, height: 120)
+                CoastImage(name: route.artwork, height: 120,
+                           placeholder: place?.gradient, symbol: place?.symbol)
                     .overlay(alignment: .topLeading) {
                         Text(route.badge)
                             .font(.system(size: 11, weight: .bold))
@@ -336,7 +341,7 @@ struct RefinePlanCard: View {
                 .font(.system(size: 15, weight: .bold))
                 .foregroundStyle(Palette.text)
             HStack(spacing: 8) {
-                TextField("Tell Claude what to change…", text: $text, axis: .vertical)
+                TextField("Tell us what to change…", text: $text, axis: .vertical)
                     .font(.system(size: 14))
                     .lineLimit(1...3)
                     .submitLabel(.send)
@@ -373,46 +378,190 @@ struct RefinePlanCard: View {
     }
 }
 
-struct ClaudeKeySheet: View {
-    let onSaved: () -> Void
-    @State private var key = ""
+struct KeySetupSheet: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Kicker(text: "Connect services")
+                Text("Add your API keys.")
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(Palette.text)
+                    .padding(.top, 7)
+                Text("Copy .env.example to .env in the project folder, fill in the keys, and build again. The file is gitignored and copied into the app at build time.")
+                    .font(.system(size: 14)).foregroundStyle(Palette.muted)
+                    .padding(.top, 8)
+                VStack(spacing: 0) {
+                    keyRow(AppConfig.jev?.keyName ?? "JEV_API_KEY", "Jev · matches your wish to places (or OPENROUTER_API_KEY)", AppConfig.jev != nil)
+                    Divider()
+                    keyRow("MINIMAX_API_KEY", "MiniMax M3.1 · writes custom plans", AppConfig.miniMaxAPIKey != nil)
+                }
+                .padding(.horizontal, 14)
+                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 14))
+                .padding(.top, 22)
+                Text("JEV_API_KEY=…\nMINIMAX_API_KEY=…")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(Palette.text)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.top, 12)
+            }
+            .padding(.horizontal, 24).padding(.top, 34).padding(.bottom, 30)
+        }
+        .presentationDragIndicator(.visible)
+        .presentationDetents([.medium, .large])
+        .presentationBackground(Palette.background)
+    }
+
+    private func keyRow(_ key: String, _ purpose: String, _ isSet: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: isSet ? "checkmark.circle.fill" : "circle.dashed")
+                .foregroundStyle(isSet ? Palette.accent : Palette.muted)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(key).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(Palette.text)
+                Text(purpose).font(.system(size: 12)).foregroundStyle(Palette.muted)
+            }
+            Spacer()
+            Text(isSet ? "Set" : "Missing")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSet ? Palette.accent : Palette.muted)
+        }
+        .padding(.vertical, 13)
+    }
+}
+
+struct PlaceMatchRow: View {
+    let match: PlaceMatch
+    let action: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Kicker(text: "Connect Claude")
-            Text("Plan real trips.")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(Palette.text)
-                .padding(.top, 7)
-            Text("Elsewhere uses Claude to turn your wish into routes and itineraries. Paste an Anthropic API key from platform.claude.com. It stays in this device’s Keychain.")
-                .font(.system(size: 14)).foregroundStyle(Palette.muted)
-                .padding(.top, 8)
-            SecureField("sk-ant-…", text: $key)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.system(size: 15, design: .monospaced))
-                .padding(14)
-                .background(Palette.surface, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.separator))
-                .padding(.top, 22)
-            Button {
-                KeyStore.save(key)
-                onSaved()
-            } label: {
-                Text("Save and continue")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 12))
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(spacing: 12) {
+                    Group {
+                        if UIImage(named: match.place.artwork) != nil {
+                            Image(match.place.artwork).resizable().scaledToFill()
+                        } else {
+                            match.place.gradient
+                                .overlay {
+                                    Image(systemName: match.place.symbol)
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(.white)
+                                }
+                        }
+                    }
+                    .frame(width: 52, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(match.place.name)
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(Palette.text)
+                        Text(match.place.tagline)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Palette.muted)
+                            .lineLimit(2)
+                    }
+                    Spacer(minLength: 6)
+                    VStack(alignment: .trailing, spacing: 1) {
+                        Text("\(match.percent)%")
+                            .font(.system(size: 21, weight: .bold))
+                            .foregroundStyle(match.percent >= 60 ? Palette.accent : Palette.text)
+                            .contentTransition(.numericText())
+                        Text("fit").font(.system(size: 11)).foregroundStyle(Palette.muted)
+                    }
+                }
+                if !match.reasons.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(match.reasons) { reason in
+                            Label(reason.text, systemImage: reason.symbol)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(reason.isWarning ? Color.orange : Palette.accent)
+                                .padding(.horizontal, 9).padding(.vertical, 6)
+                                .background((reason.isWarning ? Color.orange.opacity(0.12) : Palette.accentSoft), in: Capsule())
+                        }
+                    }
+                }
             }
-            .disabled(key.trimmingCharacters(in: .whitespaces).isEmpty)
-            .padding(.top, 14)
-            Spacer()
+            .padding(13)
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Palette.separator))
         }
-        .padding(.horizontal, 24).padding(.top, 34)
-        .presentationDragIndicator(.visible)
-        .presentationDetents([.medium])
-        .presentationBackground(Palette.background)
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(match.place.name), \(match.percent) percent fit. " +
+                            match.reasons.map(\.text).joined(separator: ", "))
+    }
+}
+
+struct MatchNoticeCard: View {
+    let symbol: String
+    let message: String
+    var actionTitle: String? = nil
+    var action: () -> Void = {}
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: symbol)
+                .font(.system(size: 15))
+                .foregroundStyle(Palette.accent)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Palette.text)
+                if let actionTitle {
+                    Button(actionTitle, action: action)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Palette.accent)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(15)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Palette.separator))
+    }
+}
+
+/// Lays children out in rows, wrapping to a new row when the width runs out.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(for: subviews, width: proposal.width ?? .infinity)
+        let height = rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        let width = rows.map(\.width).max() ?? 0
+        return CGSize(width: proposal.width ?? width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(for: subviews, width: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private struct Row { var indices: [Int] = []; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func rows(for subviews: Subviews, width: CGFloat) -> [Row] {
+        var rows: [Row] = [Row()]
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let needed = rows[rows.count - 1].indices.isEmpty ? size.width : rows[rows.count - 1].width + spacing + size.width
+            if needed > width, !rows[rows.count - 1].indices.isEmpty {
+                rows.append(Row(indices: [index], width: size.width, height: size.height))
+            } else {
+                rows[rows.count - 1].indices.append(index)
+                rows[rows.count - 1].width = needed
+                rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
+            }
+        }
+        return rows
     }
 }

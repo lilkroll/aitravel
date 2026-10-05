@@ -22,16 +22,19 @@ struct ContentView: View {
     @State private var planError: String?
     @State private var refineText = ""
     @State private var wishBeforeImprove: String?
-    @State private var showKeySheet = false
-    @State private var afterKeySaved: (() -> Void)?
+    @State private var wishError: String?
+    @State private var matcher = PlaceMatcher()
+    @State private var showAllMatches = false
+    @FocusState private var wishFocused: Bool
+    @State private var showKeySetup = false
     @State private var swapTarget: SwapTarget?
     @State private var voiceIdeas = false
     @State private var showProfile = false
     @State private var showMap = false
     @State private var mapMode: MapActivityMode = .mine
-    @State private var selectedDestination: FeedDestination?
+    @State private var selectedPlace: Place?
     @State private var feedCategory: FeedCategory = .all
-    @State private var savedIdeaIDs: Set<Int> = []
+    @State private var savedIdeaIDs: Set<String> = []
 
     init() {
         #if DEBUG
@@ -51,12 +54,18 @@ struct ContentView: View {
             _mapMode = State(initialValue: .everyone)
         }
         if arguments.contains("--preview-profile") { _showProfile = State(initialValue: true) }
-        if arguments.contains("--preview-destination") { _selectedDestination = State(initialValue: FeedData.destinations[0]) }
+        if arguments.contains("--preview-destination") { _selectedPlace = State(initialValue: PlaceLibrary.all.first) }
+        if arguments.contains("--preview-place-routes"), let place = PlaceLibrary.all.first {
+            _screen = State(initialValue: .routes)
+            _routes = State(initialValue: place.routes)
+            _routeID = State(initialValue: place.routes[0].id)
+            _planContext = State(initialValue: .place(place, origin: "Warsaw"))
+        }
         #endif
     }
 
     private var route: TravelRoute { routeWith(id: routeID) ?? routes[0] }
-    private var isGeneratedPlan: Bool { routes.first?.days != nil }
+    private var isGeneratedPlan: Bool { planContext.source == .generated }
 
     private func routeWith(id: Int) -> TravelRoute? {
         routes.first { $0.id == id } ?? (savedRoute?.id == id ? savedRoute : nil)
@@ -99,26 +108,25 @@ struct ContentView: View {
             .presentationBackground(Palette.background)
         }
         .sheet(isPresented: $showProfile) { TravelProfileSheet() }
-        .sheet(isPresented: $showKeySheet) {
-            ClaudeKeySheet {
-                showKeySheet = false
-                afterKeySaved?()
-                afterKeySaved = nil
-            }
-        }
+        .sheet(isPresented: $showKeySetup) { KeySetupSheet() }
         .sheet(isPresented: $showMap) { TravelMapSheet(mode: $mapMode) }
-        .sheet(item: $selectedDestination) { destination in
-            FeedDestinationSheet(destination: destination, isSaved: savedIdeaIDs.contains(destination.id)) {
-                if savedIdeaIDs.contains(destination.id) {
-                    savedIdeaIDs.remove(destination.id)
+        .sheet(item: $selectedPlace) { place in
+            PlaceSheet(place: place, isSaved: savedIdeaIDs.contains(place.id)) {
+                if savedIdeaIDs.contains(place.id) {
+                    savedIdeaIDs.remove(place.id)
                 } else {
-                    savedIdeaIDs.insert(destination.id)
+                    savedIdeaIDs.insert(place.id)
                 }
+            } openRoute: { route in
+                selectedPlace = nil
+                open(place, route: route)
             }
         }
         #if DEBUG
         .task {
-            if ProcessInfo.processInfo.arguments.contains("--preview-plan-run") { startPlanning() }
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--preview-plan-run") { startPlanning() }
+            if arguments.contains("--preview-matches") { matcher.preview(answers: PlaceMatcher.sampleAnswers, wish: wish) }
         }
         #endif
         .confirmationDialog("Try a spoken idea", isPresented: $voiceIdeas) {
@@ -131,8 +139,23 @@ struct ContentView: View {
         .preferredColorScheme(.light)
     }
 
-    private var filteredDestinations: [FeedDestination] {
-        feedCategory == .all ? FeedData.destinations : FeedData.destinations.filter { $0.category == feedCategory }
+    private var filteredPlaces: [Place] {
+        feedCategory == .all ? PlaceLibrary.all : PlaceLibrary.all.filter { $0.categories.contains(feedCategory) }
+    }
+
+    /// Shows a place's ready-made routes, or one route's itinerary.
+    private func open(_ place: Place, route: TravelRoute? = nil) {
+        routes = place.routes
+        planContext = .place(place, origin: "Warsaw")
+        planError = nil
+        if let route {
+            routeID = route.id
+            selectedDay = 1
+            screen = .itinerary
+        } else {
+            routeID = place.routes[0].id
+            screen = .routes
+        }
     }
 
     private var feedPage: some View {
@@ -194,25 +217,25 @@ struct ContentView: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(Palette.text)
                     Spacer()
-                    Text("\(filteredDestinations.count) places")
+                    Text("\(filteredPlaces.count) places")
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.muted)
                 }
                 .padding(.top, 18).padding(.bottom, 12)
 
-                ForEach(filteredDestinations.indices, id: \.self) { index in
-                    let destination = filteredDestinations[index]
+                ForEach(filteredPlaces.indices, id: \.self) { index in
+                    let place = filteredPlaces[index]
                     Group {
                         if index == 0 {
-                            FeedFeatureCard(destination: destination) { selectedDestination = destination }
+                            PlaceFeatureCard(place: place) { selectedPlace = place }
                         } else {
-                            FeedCompactCard(destination: destination) { selectedDestination = destination }
+                            PlaceCompactCard(place: place) { selectedPlace = place }
                         }
                     }
                     .padding(.bottom, 11)
                 }
 
-                Text("Seasonal ideas are editorial samples. Travel times and budgets are illustrative, not live availability or fares.")
+                Text("Places and routes are editorial samples. Flight times and budgets are per-person estimates from Warsaw, not live availability or fares.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.muted)
                     .padding(.top, 6)
@@ -222,7 +245,7 @@ struct ContentView: View {
                         Text("Somewhere else in mind?")
                             .font(.system(size: 18, weight: .bold))
                             .foregroundStyle(Palette.text)
-                        Text("Start with a feeling. Shape the rest later.")
+                        Text("Describe it and we’ll match it to places.")
                             .font(.system(size: 12))
                             .foregroundStyle(Palette.muted)
                     }
@@ -245,6 +268,7 @@ struct ContentView: View {
     }
 
     private var explorePage: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -267,23 +291,23 @@ struct ContentView: View {
                 Text("Tell us what you’re longing for. We’ll turn it into a few good ways to go.")
                     .font(.system(size: 15)).foregroundStyle(Palette.muted)
                     .padding(.top, 9)
-                CoastImage(name: "Algarve", height: 265)
+                CoastImage(name: "Algarve", height: 150)
                     .overlay(alignment: .top) {
                         Text("SOMEWHERE, SOON")
                             .font(.system(size: 11, weight: .bold)).tracking(1.3)
                             .padding(.horizontal, 10).padding(.vertical, 7)
                             .background(.white.opacity(0.82), in: Capsule())
-                            .padding(.top, 23)
+                            .padding(.top, 16)
                     }
                     .overlay(alignment: .bottomLeading) {
                         Text("The coast is calling.")
-                            .font(.system(size: 29, weight: .bold)).tracking(-1)
+                            .font(.system(size: 24, weight: .bold)).tracking(-0.8)
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.3), radius: 8)
                             .padding(20)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 24))
-                    .padding(.top, 25)
+                    .padding(.top, 20)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Describe your next escape")
                         .font(.system(size: 13, weight: .bold))
@@ -292,6 +316,7 @@ struct ContentView: View {
                         .foregroundStyle(Palette.text)
                         .scrollContentBackground(.hidden)
                         .frame(height: 92)
+                        .focused($wishFocused)
                         .accessibilityLabel("Describe your next escape")
                     Palette.separator.frame(height: 1)
                     HStack {
@@ -330,15 +355,20 @@ struct ContentView: View {
                                 .background(Palette.accentSoft, in: Circle())
                         }
                         .accessibilityLabel("Try a spoken idea")
-                        Button(action: startPlanning) {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .frame(width: 38, height: 38)
-                                .background(Palette.accent, in: Circle())
+                        Button { findPlaces(proxy) } label: {
+                            Group {
+                                if matcher.isMatching {
+                                    ProgressView().controlSize(.small).tint(.white)
+                                } else {
+                                    Image(systemName: "arrow.right").font(.system(size: 16, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(Palette.accent, in: Circle())
                         }
-                        .disabled(planner.isWorking || wish.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityLabel("Plan this trip")
+                        .disabled(matcher.isMatching || wishLength < PlaceMatcher.minimumCharacters)
+                        .accessibilityLabel("Find places that fit")
                     }
                 }
                 .padding(17)
@@ -353,18 +383,110 @@ struct ContentView: View {
                     }
                 }
                 .padding(.top, 15)
-                HStack {
-                    Text("Ideas for the feeling").font(.system(size: 14, weight: .bold))
-                    Spacer()
-                    Text("Tap to explore").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                if let wishError {
+                    Text(wishError)
+                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .padding(.top, 10)
                 }
-                .padding(.top, 27).padding(.bottom, 13)
-                HStack(spacing: 10) {
-                    inspiration("Costa", "Take the\nscenic route")
-                    inspiration("Tavira", "Find a quiet\nshore")
-                }
+                matchesSection
+                    .id("matches")
             }
             .padding(.horizontal, 20).padding(.top, 15).padding(.bottom, 30)
+        }
+        #if DEBUG
+        .task {
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--preview-submit") { findPlaces(proxy) }
+            guard arguments.contains("--preview-matches") else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            proxy.scrollTo("matches", anchor: .top)
+        }
+        #endif
+        }
+    }
+
+    private var wishLength: Int { wish.trimmingCharacters(in: .whitespacesAndNewlines).count }
+
+    /// Asks Jev to match the wish against every place. Runs only when the traveller submits.
+    private func findPlaces(_ proxy: ScrollViewProxy) {
+        guard wishLength >= PlaceMatcher.minimumCharacters else { return }
+        wishFocused = false
+        showAllMatches = false
+        withAnimation { proxy.scrollTo("matches", anchor: .top) }
+        Task { await matcher.match(wish: wish, origin: "Warsaw") }
+    }
+
+    private var matchesSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Places that fit you").font(.system(size: 14, weight: .bold))
+                Spacer()
+                if matcher.isMatching {
+                    ProgressView().controlSize(.small)
+                } else if !matcher.matches.isEmpty {
+                    Text("Matched by Jev").font(.system(size: 12)).foregroundStyle(Palette.muted)
+                }
+            }
+            .padding(.top, 27).padding(.bottom, 13)
+            if let error = matcher.error, !matcher.isMatching {
+                MatchNoticeCard(symbol: "exclamationmark.triangle", message: error,
+                                actionTitle: AppConfig.jev == nil ? "Set up keys" : nil) { showKeySetup = true }
+                    .padding(.bottom, matcher.matches.isEmpty ? 0 : 9)
+            }
+            if matcher.matches.isEmpty {
+                if matcher.isMatching {
+                    MatchNoticeCard(symbol: "sparkle.magnifyingglass", message: "Matching your wish to \(PlaceLibrary.all.count) places…")
+                } else if matcher.error == nil {
+                    MatchNoticeCard(
+                        symbol: "text.cursor",
+                        message: wishLength < PlaceMatcher.minimumCharacters
+                            ? "Describe your trip in at least \(PlaceMatcher.minimumCharacters) characters (\(wishLength)/\(PlaceMatcher.minimumCharacters)), then tap → to find places that fit."
+                            : "Tap → to match your wish to \(PlaceLibrary.all.count) places."
+                    )
+                }
+            } else {
+                if !matcher.isMatching, matcher.matchedWish != wish.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    Label("You’ve edited your wish. Tap → to update these matches.", systemImage: "arrow.clockwise")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.muted)
+                        .padding(.bottom, 10)
+                }
+                let shown = showAllMatches ? matcher.matches : Array(matcher.matches.prefix(5))
+                ForEach(shown) { match in
+                    PlaceMatchRow(match: match) { open(match.place) }
+                        .padding(.bottom, 9)
+                }
+                .opacity(matcher.isMatching ? 0.55 : 1)
+                .animation(.easeInOut(duration: 0.2), value: matcher.isMatching)
+                if matcher.matches.count > 5 {
+                    Button(showAllMatches ? "Show top 5" : "Show all \(matcher.matches.count) places") {
+                        withAnimation { showAllMatches.toggle() }
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.accent)
+                    .padding(.top, 2)
+                }
+            }
+            Button(action: startPlanning) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Not quite it?").font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.text)
+                        Text("Plan a custom trip from your words with MiniMax.")
+                            .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Palette.accent, in: Circle())
+                }
+                .padding(15)
+                .background(Palette.accentSoft.opacity(0.65), in: RoundedRectangle(cornerRadius: 18))
+            }
+            .buttonStyle(.plain)
+            .disabled(planner.isWorking || wishLength == 0)
+            .padding(.top, 14)
         }
     }
 
@@ -377,19 +499,6 @@ struct ContentView: View {
         }
     }
 
-    private func inspiration(_ image: String, _ title: String) -> some View {
-        Button { screen = .routes } label: {
-            CoastImage(name: image, height: 116)
-                .overlay(alignment: .bottomLeading) {
-                    Text(title).font(.system(size: 18, weight: .bold))
-                        .multilineTextAlignment(.leading)
-                        .foregroundStyle(.white).padding(13)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var routesPage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -400,16 +509,18 @@ struct ContentView: View {
                 }
                 .padding(.bottom, 29)
                 Kicker(text: "Three good ways to go")
-                Text("Your escape,\n\(Text("three ways.").foregroundColor(Palette.accent))")
+                Text("\(planContext.title),\n\(Text("three ways.").foregroundColor(Palette.accent))")
                     .font(.system(size: 34, weight: .bold)).tracking(-0.8)
                     .foregroundStyle(Palette.text).padding(.top, 10)
-                Text("Each route answers the same wish with a different balance of ease, nature, and cost.")
+                Text(planContext.source == .place
+                     ? "Ready-made routes, each with a different balance of ease, nature, and cost."
+                     : "Each route answers the same wish with a different balance of ease, nature, and cost.")
                     .font(.system(size: 15)).foregroundStyle(Palette.muted)
                     .padding(.top, 8)
                 HStack(spacing: 7) {
                     contextChip("↗ From \(planContext.origin)")
-                    contextChip("◷ \(planContext.days) days")
-                    contextChip("€ \(planContext.budget.replacingOccurrences(of: "€", with: ""))")
+                    contextChip("◷ \(planContext.duration)")
+                    contextChip("€ \(planContext.budget)")
                 }
                 .padding(.top, 18).padding(.bottom, 20)
                 if planner.isWorking {
@@ -428,13 +539,21 @@ struct ContentView: View {
                             .padding(.top, 8)
                     }
                 }
-                Text(isGeneratedPlan
-                     ? "Planned with Claude. Prices and times are estimates per person in EUR, not live fares or bookable options. Check details before you book."
-                     : "Illustrative route concepts and per-person EUR estimates. These are not live prices or bookable options.")
-                    .font(.system(size: 12)).foregroundStyle(Palette.muted)
-                    .padding(.top, 5)
+                if !planner.isWorking {
+                    Text(routesFootnote)
+                        .font(.system(size: 12)).foregroundStyle(Palette.muted)
+                        .padding(.top, 5)
+                }
             }
             .padding(.horizontal, 20).padding(.top, 15).padding(.bottom, 30)
+        }
+    }
+
+    private var routesFootnote: String {
+        switch planContext.source {
+        case .generated: "Planned with MiniMax. Prices and times are estimates per person in EUR, not live fares or bookable options. Check details before you book."
+        case .place: "Ready-made routes with per-person EUR estimates from Warsaw for autumn 2026. Not live prices or bookable options."
+        case .sample: "Illustrative route concepts and per-person EUR estimates. These are not live prices or bookable options."
         }
     }
 
@@ -454,9 +573,8 @@ struct ContentView: View {
     }
 
     private func startPlanning() {
-        guard ClaudeAPI.apiKey != nil else {
-            afterKeySaved = startPlanning
-            showKeySheet = true
+        guard LLMAPI.apiKey != nil else {
+            showKeySetup = true
             return
         }
         planError = nil
@@ -493,19 +611,18 @@ struct ContentView: View {
     }
 
     private func improveWish() {
-        guard ClaudeAPI.apiKey != nil else {
-            afterKeySaved = improveWish
-            showKeySheet = true
+        guard LLMAPI.apiKey != nil else {
+            showKeySetup = true
             return
         }
         let original = wish
+        wishError = nil
         Task {
             do {
                 wish = try await planner.improve(wish: original, origin: "Warsaw")
                 wishBeforeImprove = original
             } catch {
-                planError = error.localizedDescription
-                screen = .routes
+                wishError = error.localizedDescription
             }
         }
     }
@@ -538,7 +655,7 @@ struct ContentView: View {
                 Text(route.headline).font(.system(size: 38, weight: .bold))
                     .tracking(-0.8).foregroundStyle(Palette.text)
                     .fixedSize(horizontal: false, vertical: true).padding(.top, 7)
-                Text("\(route.dayCount) days · from \(planContext.origin) · \(isGeneratedPlan ? "planned with Claude" : "illustrative plan")")
+                Text("\(route.dayCount) days · from \(planContext.origin) · \(sourceLabel)")
                     .font(.system(size: 13)).foregroundStyle(Palette.muted).padding(.top, 6)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 7) {
@@ -584,6 +701,14 @@ struct ContentView: View {
                     .font(.system(size: 12)).foregroundStyle(Palette.muted).padding(.top, 15)
             }
             .padding(.horizontal, 20).padding(.top, 15).padding(.bottom, 30)
+        }
+    }
+
+    private var sourceLabel: String {
+        switch planContext.source {
+        case .generated: "planned with MiniMax"
+        case .place: "ready-made route"
+        case .sample: "illustrative plan"
         }
     }
 
@@ -634,7 +759,7 @@ struct ContentView: View {
             Text("~\(euro(route.estimatedTotal + change.price))")
                 .font(.system(size: 35, weight: .bold))
                 .foregroundStyle(.white).padding(.top, 8)
-            Text("Per person · \(route.dayCount) days · EUR · \(isGeneratedPlan ? "estimate" : "illustrative")")
+            Text("Per person · \(route.dayCount) days · EUR · \(planContext.source == .sample ? "illustrative" : "estimate")")
                 .font(.system(size: 12)).foregroundStyle(.white.opacity(0.7))
                 .padding(.top, 3).padding(.bottom, 13)
             budgetRow("Travel to destination", route.costs.destinationTravel)
@@ -696,6 +821,10 @@ struct ContentView: View {
                         RouteCard(route: saved, total: saved.estimatedTotal + change.price,
                                   travel: saved.travelMinutes + change.roadMinutes,
                                   visits: saved.visitMinutes + change.visitMinutes) {
+                            if let place = PlaceLibrary.place(containing: saved.id) {
+                                planContext = .place(place, origin: "Warsaw")
+                                routes = place.routes
+                            }
                             routeID = saved.id
                             selectedDay = 1
                             screen = .itinerary
@@ -703,8 +832,8 @@ struct ContentView: View {
                     }
                     if !savedIdeaIDs.isEmpty {
                         Kicker(text: "Places to revisit").padding(.top, 27).padding(.bottom, 12)
-                        ForEach(FeedData.destinations.filter { savedIdeaIDs.contains($0.id) }) { destination in
-                            FeedCompactCard(destination: destination) { selectedDestination = destination }
+                        ForEach(PlaceLibrary.all.filter { savedIdeaIDs.contains($0.id) }) { place in
+                            PlaceCompactCard(place: place) { selectedPlace = place }
                                 .padding(.bottom, 10)
                         }
                     }

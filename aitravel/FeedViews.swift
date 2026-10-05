@@ -134,16 +134,16 @@ struct WorldMapCard: View {
     }
 }
 
-struct FeedFeatureCard: View {
-    let destination: FeedDestination
+struct PlaceFeatureCard: View {
+    let place: Place
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 0) {
-                CoastImage(name: destination.artwork, height: 180)
+                CoastImage(name: place.artwork, height: 180, placeholder: place.gradient, symbol: place.symbol)
                     .overlay(alignment: .topLeading) {
-                        Text(destination.badge)
+                        Text(place.region)
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Palette.text)
                             .padding(.horizontal, 10).padding(.vertical, 6)
@@ -151,7 +151,7 @@ struct FeedFeatureCard: View {
                             .padding(13)
                     }
                     .overlay(alignment: .bottomLeading) {
-                        Text(destination.name)
+                        Text(place.name)
                             .font(.system(size: 30, weight: .bold))
                             .foregroundStyle(.white)
                             .shadow(color: .black.opacity(0.28), radius: 8)
@@ -160,10 +160,10 @@ struct FeedFeatureCard: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(destination.country)
+                            Text("\(place.routes.count) ROUTES · \(place.dayRange.uppercased())")
                                 .font(.system(size: 11, weight: .bold))
                                 .foregroundStyle(Palette.muted)
-                            Text(destination.whyNow)
+                            Text(place.tagline)
                                 .font(.system(size: 14, weight: .semibold))
                                 .foregroundStyle(Palette.text)
                                 .multilineTextAlignment(.leading)
@@ -173,38 +173,37 @@ struct FeedFeatureCard: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Palette.accent)
                     }
-                    FeedFigures(destination: destination)
+                    PlaceFigures(place: place)
                         .padding(.top, 13)
                 }
                 .padding(15)
             }
             .background(Palette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 21))
-            
         }
         .buttonStyle(.plain)
     }
 }
 
-struct FeedCompactCard: View {
-    let destination: FeedDestination
+struct PlaceCompactCard: View {
+    let place: Place
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 13) {
-                CoastImage(name: destination.artwork, height: 142)
-                    .frame(width: 112)
+                CoastImage(name: place.artwork, height: 132, placeholder: place.gradient, symbol: place.symbol)
+                    .frame(width: 104)
                     .clipShape(RoundedRectangle(cornerRadius: 15))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(destination.badge)
+                    Text(place.region)
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Palette.muted)
-                    Text(destination.name)
+                    Text(place.name)
                         .font(.system(size: 22, weight: .bold))
                         .foregroundStyle(Palette.text)
                         .padding(.top, 4)
-                    Text(destination.whyNow)
+                    Text(place.tagline)
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.muted)
                         .multilineTextAlignment(.leading)
@@ -212,9 +211,9 @@ struct FeedCompactCard: View {
                         .padding(.top, 4)
                     Spacer(minLength: 3)
                     HStack(spacing: 7) {
-                        Text("~\(formattedDuration(destination.travelMinutes))")
+                        Text("\(place.routes.count) routes")
                         Text("·")
-                        Text("~\(euro(destination.estimatedBudget))")
+                        Text("from ~\(euro(place.cheapestTotal))")
                     }
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Palette.accent)
@@ -225,20 +224,19 @@ struct FeedCompactCard: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.surface, in: RoundedRectangle(cornerRadius: 20))
-            
         }
         .buttonStyle(.plain)
     }
 }
 
-struct FeedFigures: View {
-    let destination: FeedDestination
+struct PlaceFigures: View {
+    let place: Place
 
     var body: some View {
         HStack(spacing: 0) {
-            Label("~\(formattedDuration(destination.travelMinutes)) travel", systemImage: "airplane")
+            Label("~\(formattedHours(place.flightHoursFromWarsaw)) flight", systemImage: "airplane")
             Spacer()
-            Text("~\(euro(destination.estimatedBudget)) / \(destination.days) days")
+            Text("from ~\(euro(place.cheapestTotal)) · \(place.dayRange)")
                 .fontWeight(.bold)
         }
         .font(.system(size: 12))
@@ -248,46 +246,73 @@ struct FeedFigures: View {
     }
 }
 
-struct FeedDestinationSheet: View {
-    let destination: FeedDestination
+struct PlaceSheet: View {
+    let place: Place
     let isSaved: Bool
     let toggleSaved: () -> Void
+    let openRoute: (TravelRoute) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                CoastImage(name: destination.artwork, height: 225)
+                CoastImage(name: place.artwork, height: UIImage(named: place.artwork) == nil ? 130 : 225,
+                           placeholder: place.gradient, symbol: place.symbol)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                if let credit = PhotoCredits.credit(for: destination.artwork) {
+                if let credit = PhotoCredits.credit(for: place.artwork) {
                     Link("Photo by \(credit.photographer) · \(credit.license)", destination: URL(string: credit.sourceURL)!)
                         .font(.system(size: 12))
                         .foregroundStyle(Palette.muted)
                         .padding(.top, 8)
                 }
-                Kicker(text: destination.badge)
+                Kicker(text: place.region)
                     .padding(.top, 16)
-                Text(destination.name)
+                Text(place.name)
                     .font(.system(size: 39, weight: .bold))
                     .foregroundStyle(Palette.text)
                     .padding(.top, 6)
-                Text(destination.country)
-                    .font(.system(size: 14)).foregroundStyle(Palette.muted)
-                Text(destination.whyNow)
+                Text(place.tagline)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Palette.text)
-                    .padding(.top, 18)
-                Text(destination.detail)
+                    .padding(.top, 4)
+                Text(place.summary)
                     .font(.system(size: 15))
                     .foregroundStyle(Palette.muted)
-                    .padding(.top, 7)
-                FeedFigures(destination: destination)
-                    .padding(.top, 22)
-                Text("Travel time and budget are illustrative per-person estimates from Warsaw, not live fares.")
+                    .padding(.top, 10)
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(place.highlights, id: \.self) { highlight in
+                        HStack(alignment: .firstTextBaseline, spacing: 9) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Palette.accent)
+                            Text(highlight)
+                                .foregroundStyle(Palette.text)
+                        }
+                        .font(.system(size: 14))
+                    }
+                }
+                .padding(.top, 16)
+                Label(place.october, systemImage: "calendar")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Palette.muted)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.surface, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.top, 16)
+                PlaceFigures(place: place)
+                    .padding(.top, 18)
+                Kicker(text: "\(place.routes.count) ways to go")
+                    .padding(.top, 26).padding(.bottom, 12)
+                ForEach(place.routes) { route in
+                    RouteCard(route: route, total: route.estimatedTotal, travel: route.travelMinutes, visits: route.visitMinutes) {
+                        openRoute(route)
+                    }
+                    .padding(.bottom, 12)
+                }
+                Text("Ready-made routes with per-person EUR estimates from Warsaw for autumn 2026. Not live fares or availability.")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.muted)
-                    .padding(.top, 12)
+                    .padding(.top, 2)
                 Button(action: toggleSaved) {
-                    Label(isSaved ? "Saved to your ideas" : "Save this idea", systemImage: isSaved ? "heart.fill" : "heart")
+                    Label(isSaved ? "Saved to your ideas" : "Save this place", systemImage: isSaved ? "heart.fill" : "heart")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
@@ -299,7 +324,7 @@ struct FeedDestinationSheet: View {
             .padding(.horizontal, 24).padding(.top, 28).padding(.bottom, 35)
         }
         .presentationDragIndicator(.visible)
-        .presentationDetents([.height(680), .large])
+        .presentationDetents([.large])
         .presentationBackground(Palette.background)
     }
 }
@@ -394,7 +419,6 @@ struct TravelMapSheet: View {
 struct TravelProfileSheet: View {
     @State private var showPhotoCredits = false
     @State private var showKeySheet = false
-    @State private var hasKey = ClaudeAPI.apiKey != nil
 
     var body: some View {
         ScrollView {
@@ -425,7 +449,7 @@ struct TravelProfileSheet: View {
                 profileRow("Travel style", "Sea + nature", "sparkles")
                 profileRow("Usual escape", "3–4 days", "calendar")
                 Button { showKeySheet = true } label: {
-                    profileRow("Claude", hasKey ? "Connected" : "Add API key", "sparkles")
+                    profileRow("Smart matching", AppConfig.jev != nil && AppConfig.miniMaxAPIKey != nil ? "Connected" : "Set up keys", "sparkles")
                 }
                 .buttonStyle(.plain)
                 Text("Example profile settings for this visual mock.")
@@ -439,10 +463,7 @@ struct TravelProfileSheet: View {
         .presentationBackground(Palette.background)
         .sheet(isPresented: $showPhotoCredits) { PhotoCreditsSheet() }
         .sheet(isPresented: $showKeySheet) {
-            ClaudeKeySheet {
-                showKeySheet = false
-                hasKey = ClaudeAPI.apiKey != nil
-            }
+            KeySetupSheet()
         }
     }
 

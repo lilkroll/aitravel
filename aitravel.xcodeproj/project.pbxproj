@@ -16,6 +16,10 @@
 		A10000000000000000000006 /* TravelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* TravelModels.swift */; };
 		A10000000000000000000007 /* TravelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* TravelViews.swift */; };
 		A10000000000000000000008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* Assets.xcassets */; };
+		A1000000000000000000000A /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* AppConfig.swift */; };
+		A1000000000000000000000B /* Places.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* Places.swift */; };
+		A1000000000000000000000C /* PlaceMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* PlaceMatcher.swift */; };
+		A1000000000000000000000D /* Places.json in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* Places.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +33,10 @@
 		A20000000000000000000006 /* TravelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelModels.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 /* TravelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelViews.swift; sourceTree = "<group>"; };
 		A20000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2000000000000000000000A /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* Places.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Places.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* PlaceMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceMatcher.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D /* Places.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Places.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,10 +68,14 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000001 /* aitravelApp.swift */,
+				A2000000000000000000000A /* AppConfig.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
 				A20000000000000000000003 /* FeedModels.swift */,
 				A20000000000000000000004 /* FeedViews.swift */,
 				A20000000000000000000005 /* PhotoCredits.swift */,
+				A2000000000000000000000C /* PlaceMatcher.swift */,
+				A2000000000000000000000B /* Places.swift */,
+				A2000000000000000000000D /* Places.json */,
 				A20000000000000000000009 /* Planner.swift */,
 				A20000000000000000000006 /* TravelModels.swift */,
 				A20000000000000000000007 /* TravelViews.swift */,
@@ -82,6 +94,7 @@
 				74B797E7306FDB7E0056B4E5 /* Sources */,
 				74B797E8306FDB7E0056B4E5 /* Frameworks */,
 				74B797E9306FDB7E0056B4E5 /* Resources */,
+				A30000000000000000000001 /* Bundle .env */,
 			);
 			buildRules = (
 			);
@@ -129,15 +142,41 @@
 			isa = PBXResourcesBuildPhase;
 			files = (
 				A10000000000000000000008 /* Assets.xcassets in Resources */,
+				A1000000000000000000000D /* Places.json in Resources */,
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A30000000000000000000001 /* Bundle .env */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle .env";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Copies the project-root .env (API keys) into the app as app.env.\n# The file is gitignored; without it the app still builds and shows setup hints.\nENV_SOURCE=\"${SRCROOT}/.env\"\nENV_TARGET=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/app.env\"\nif [ -f \"$ENV_SOURCE\" ]; then\n  cp \"$ENV_SOURCE\" \"$ENV_TARGET\"\nelse\n  : > \"$ENV_TARGET\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		74B797E7306FDB7E0056B4E5 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 				A10000000000000000000001 /* aitravelApp.swift in Sources */,
+				A1000000000000000000000A /* AppConfig.swift in Sources */,
+				A1000000000000000000000B /* Places.swift in Sources */,
+				A1000000000000000000000C /* PlaceMatcher.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				A10000000000000000000003 /* FeedModels.swift in Sources */,
 				A10000000000000000000004 /* FeedViews.swift in Sources */,
@@ -188,7 +227,7 @@
 				DEVELOPMENT_TEAM = KMRQ37362U;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -252,7 +291,7 @@
 				DEVELOPMENT_TEAM = KMRQ37362U;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
